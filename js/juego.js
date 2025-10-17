@@ -115,6 +115,7 @@ class Vehicle {
 
         this.mesh.position.copy(this.position);
         this.mesh.rotation.y = this.rotation;
+
     }
 
     takeDamage(damage) {
@@ -129,9 +130,7 @@ class Vehicle {
 
     explode() {
         exitVehicle();
-        if (this.mesh) {
-            scene.remove(this.mesh);
-        }
+        scene.remove(this.mesh);
         isInVehicle = false;
         vehicle = null;
         scheduleVehicleRespawn();
@@ -311,7 +310,7 @@ class Enemy {
 
     createInstance() {
         if (!enemyAssets.baseModel) {
-            console.error('⚠️ Modelo base no cargado aún');
+            console.error('Modelo base no cargado aún');
             return;
         }
 
@@ -745,9 +744,86 @@ function generateWorld() {
     });
 
     // Rocas
+    function hash(x, y, z) {
+        let h = Math.sin(x * 12.9898 + y * 78.233 + z * 45.164) * 43758.5453;
+        return h - Math.floor(h);
+    }
+
+    function perlinNoise(x, y, z) {
+        const xi = Math.floor(x);
+        const yi = Math.floor(y);
+        const zi = Math.floor(z);
+
+        const xf = x - xi;
+        const yf = y - yi;
+        const zf = z - zi;
+
+        const u = xf * xf * (3.0 - 2.0 * xf);
+        const v = yf * yf * (3.0 - 2.0 * yf);
+        const w = zf * zf * (3.0 - 2.0 * zf);
+
+        const n000 = hash(xi, yi, zi);
+        const n100 = hash(xi + 1, yi, zi);
+        const n010 = hash(xi, yi + 1, zi);
+        const n110 = hash(xi + 1, yi + 1, zi);
+        const n001 = hash(xi, yi, zi + 1);
+        const n101 = hash(xi + 1, yi, zi + 1);
+        const n011 = hash(xi, yi + 1, zi + 1);
+        const n111 = hash(xi + 1, yi + 1, zi + 1);
+
+        const nx0 = n000 * (1 - u) + n100 * u;
+        const nx1 = n010 * (1 - u) + n110 * u;
+        const ny0 = nx0 * (1 - v) + nx1 * v;
+
+        const nx0z = n001 * (1 - u) + n101 * u;
+        const nx1z = n011 * (1 - u) + n111 * u;
+        const ny1 = nx0z * (1 - v) + nx1z * v;
+
+        return ny0 * (1 - w) + ny1 * w;
+    }
+
+    function createRockGeometry(size) {
+        const geometry = new THREE.IcosahedronGeometry(size / 2, 4);
+
+        const positionAttribute = geometry.getAttribute('position');
+        const positions = positionAttribute.array;
+
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            const z = positions[i + 2];
+
+            let noise = 0;
+            let amplitude = 1;
+            let frequency = 1;
+            let maxValue = 0;
+
+            for (let j = 0; j < 4; j++) {
+                noise += perlinNoise(x * frequency * 0.5, y * frequency * 0.5, z * frequency * 0.5) * amplitude;
+                maxValue += amplitude;
+                amplitude *= 0.5;
+                frequency *= 2;
+            }
+
+            noise /= maxValue;
+            noise = noise * 0.6 + 0.5;
+
+            const length = Math.sqrt(x * x + y * y + z * z);
+            const factor = noise * 0.4 + 0.7;
+
+            positions[i] = (x / length) * length * factor;
+            positions[i + 1] = (y / length) * length * factor;
+            positions[i + 2] = (z / length) * length * factor;
+        }
+
+        positionAttribute.needsUpdate = true;
+        geometry.computeVertexNormals();
+
+        return geometry;
+    }
+
     const rockTexture1 = textureLoader.load('textures/base_rock.jpg');
     const rockTexture2 = textureLoader.load('textures/brown_rock.jpg');
-
     rockTexture1.wrapS = rockTexture1.wrapT = THREE.RepeatWrapping;
     rockTexture2.wrapS = rockTexture2.wrapT = THREE.RepeatWrapping;
 
@@ -773,22 +849,20 @@ function generateWorld() {
         const minDist = 8;
 
         for (let i = 0; i < count; i++) {
-            let x, z, width, depth, height;
+            let x, z, size;
             let tries = 0;
             let valid = false;
 
             while (!valid && tries < 100) {
-                width = THREE.MathUtils.randFloat(3, 8);
-                depth = THREE.MathUtils.randFloat(3, 8);
-                height = THREE.MathUtils.randFloat(4, 12);
+                size = THREE.MathUtils.randFloat(4, 10);
                 x = THREE.MathUtils.randFloat(-groundLimit, groundLimit);
                 z = THREE.MathUtils.randFloat(-groundLimit, groundLimit);
-
                 valid = true;
+
                 for (const r of rocks) {
                     const dx = Math.abs(x - r.x);
                     const dz = Math.abs(z - r.z);
-                    if (dx < (width + r.width) / 2 + minDist && dz < (depth + r.depth) / 2 + minDist) {
+                    if (dx < (size + r.size) / 2 + minDist && dz < (size + r.size) / 2 + minDist) {
                         valid = false;
                         break;
                     }
@@ -798,24 +872,37 @@ function generateWorld() {
 
             if (valid) {
                 const materialIndex = Math.floor(Math.random() * rockMaterials.length);
-                rocks.push({ x, z, width, depth, height, materialIndex });
+                rocks.push({ x, z, size, materialIndex });
             }
         }
         return rocks;
     }
 
-    const rockPositions = generateRocks(20);
+    const rockPositions = generateRocks(40);
 
     rockPositions.forEach(pos => {
-        const geo = new THREE.BoxGeometry(pos.width, pos.height, pos.depth);
+        const geo = createRockGeometry(pos.size);
         const material = rockMaterials[pos.materialIndex];
         const mesh = new THREE.Mesh(geo, material);
 
-        mesh.position.set(pos.x, pos.height / 2, pos.z);
+        mesh.rotation.x = Math.random() * Math.PI;
+        mesh.rotation.y = Math.random() * Math.PI;
+        mesh.rotation.z = Math.random() * Math.PI;
+
+        mesh.position.set(pos.x, pos.size / 2, pos.z);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+
         scene.add(mesh);
         walls.push(mesh);
+
+        const collider = new THREE.Mesh(
+            new THREE.SphereGeometry(pos.size * 1.2 / 1.5, 8, 8),
+            new THREE.MeshBasicMaterial({ visible: false })
+        );
+        collider.position.copy(mesh.position);
+        scene.add(collider);
+        walls.push(collider);
     });
 
 }
@@ -1181,11 +1268,11 @@ function update() {
                 knockback.y = 0;
                 enemy.position.add(knockback.multiplyScalar(12));
 
-                raycaster.set(enemy.position, new THREE.Vector3(0, -1, 0));
-                const groundHits = raycaster.intersectObjects(walls);
-                if (groundHits.length > 0) {
-                    enemy.position.y = 0;
-                }
+                // raycaster.set(enemy.position, new THREE.Vector3(0, -1, 0));
+                // const groundHits = raycaster.intersectObjects(walls);
+                // if (groundHits.length > 0) {
+                //     enemy.position.y = 0;
+                // }
             }
         })
 
