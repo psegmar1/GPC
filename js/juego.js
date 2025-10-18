@@ -1099,9 +1099,13 @@ function restartGame() {
         if (enemy.mesh) {
             scene.remove(enemy.mesh);
         }
+        if (enemy.marker) {
+            scene.remove(enemy.marker);
+        }
     });
     enemies.length = 0;
     enemyMixers.length = 0;
+    enemyMarkers.length = 0;
 
     if (vehicle && vehicle.mesh) {
         scene.remove(vehicle.mesh);
